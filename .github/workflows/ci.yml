@@ -1,10 +1,7 @@
-# Starter CI from the platform template. Replace the "Build and test" step with
-# this repository's build and tests, and keep the job name: tier-1 and tier-2
-# branch rules require a passing check called build-and-test.
-#
-# The token is read-only; a job that needs more asks in its own permissions
-# block. Actions are pinned to a full commit SHA, as the org requires, and
-# Dependabot proposes updates.
+# Terraform CI. Static checks only: plans and applies run in HCP Terraform
+# (VCS-driven workspace), so this workflow needs no Azure credentials.
+# The job name stays build-and-test, the check the org's branch rules expect.
+# Actions are pinned to full commit SHAs, as the org requires.
 name: ci
 
 on:
@@ -20,33 +17,78 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TF_DIRS: ". examples/standalone"
+
 jobs:
   build-and-test:
     name: build-and-test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Build and test
-        run: echo "Replace this step with this repository's build and tests."
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.2"
+          terraform_wrapper: false
 
-  # Fails a pull request that adds a dependency with a known high or critical
-  # vulnerability. Off until an org owner creates the org Actions variable
-  # CI_DEPENDENCY_REVIEW with the value true, which switches it on in every
-  # repository at once. Private repositories also need GitHub Code Security.
-  dependency-review:
-    name: dependency-review
-    if: github.event_name == 'pull_request' && vars.CI_DEPENDENCY_REVIEW == 'true'
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate
+        run: |
+          set -euo pipefail
+          for dir in $TF_DIRS; do
+            echo "::group::validate $dir"
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+            echo "::endgroup::"
+          done
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+
+      - name: tflint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init
+          tflint --recursive --format compact
+
+      # Kubernetes manifests: render the overlay Flux applies and validate every
+      # object against the Kubernetes schemas (strict: unknown fields fail).
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: kubeconform
+        run: |
+          set -euo pipefail
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+          kubectl kustomize k8s/overlays/lab > rendered.yaml
+          "$(go env GOPATH)/bin/kubeconform" -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered.yaml
+
+  security-scan:
+    name: security-scan
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          fail-on-severity: high
+          python-version: "3.12"
+
+      # Report-only for now: drop --soft-fail once the findings are triaged.
+      - name: checkov
+        run: |
+          python -m pip install --quiet "checkov==3.4.5"
+          checkov --directory . --framework terraform kubernetes --compact --quiet --soft-fail

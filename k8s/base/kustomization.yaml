@@ -1,0 +1,18 @@
+# Demo workload that proves the secretless path end to end:
+# pod -> workload identity (federated token) -> Key Vault via the CSI driver.
+# ${...} values are filled in by Flux post-build substitution (see gitops.tf).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: aks-lab
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - secretproviderclass.yaml
+  - deployment.yaml
+  - service.yaml
+  - poddisruptionbudget.yaml
+  - networkpolicy.yaml
