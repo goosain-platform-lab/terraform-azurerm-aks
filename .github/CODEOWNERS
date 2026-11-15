@@ -1,8 +1,10 @@
+# Every change to a Terraform repository needs a platform owner's approval:
 # GitHub asks the code owners to review every pull request, and the branch
-# rules for every tier require their approval. The code owner review is how
-# "a lead developer approved this" is enforced: GitHub cannot require a role.
+# rules for every tier require their approval. Application repositories are
+# owned by the lead developers instead.
 #
 # Keep one owning team. When a line lists several owners, an approval from any
 # one of them counts, so a second team here could stand in for the first.
-# Ask other people for reviews on the pull request instead.
-*       @goosain-platform-lab/lead-developers
+# The team needs write access to count: platform.auto.tfvars in
+# platform-iac-template gives it team_access on this repository.
+*       @goosain-platform-lab/platform-owners
